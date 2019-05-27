@@ -86,4 +86,4 @@
 (define-syntax handle
   (syntax-rules (value effect finally else)
     [(_ (clause ...) body ...)
-     (handle-with (make-handler clause ...) body...)]))
+     (handle-with (make-handler clause ...) body ...)]))
