@@ -14,8 +14,8 @@
            (lambda (x) body ...))]
     [(_ (effect x k (test expr ...) ...))
      (cons 'effect
-           (lambda (x k break)
-             (cond (test (break (begin expr ...))) ...)))]
+           (lambda (x break tag ctx)
+             (cond (test (break tag ctx (lambda (k) expr ...))) ...)))]
     [(_ (finally x body ...))
      (cons 'finally
            (lambda (x) body ...))]))
@@ -38,7 +38,7 @@
                 (and handler (cdr handler))))))
        (handler
         (or (find-handler 'value handlers) identity)
-        (or (find-handler 'effect handlers) (lambda (x k break) (void)))
+        (or (find-handler 'effect handlers) (lambda (x break tag ctx) (void)))
         (or (find-handler 'finally handlers) identity)))]))
 
 (define-syntax define-handler
@@ -46,34 +46,37 @@
     [(_ name clause ...)
      (define name (make-handler clause ...))]))
 
-(define *effect-handler-procs* (make-parameter '()))
+(define *context* (make-parameter null))
 
 (define (perform value)
-  (let ((eh-procs (*effect-handler-procs*)))
-    (if (null? eh-procs)
+  (let ([context (*context*)])
+    (if (null? context)
         (error "uncaught effect" value)
-        (shift k (call/cc
-                  (lambda (break)
-                    (let loop ((eh-procs eh-procs))
-                      (if (null? eh-procs)
-                          (error "uncaught effect" value)
-                          (let ((eh-proc (car eh-procs))
-                                (rest-procs (cdr eh-procs)))
-                            (parameterize ((*effect-handler-procs* rest-procs))
-                              (eh-proc value
-                                       (lambda args (reset (apply k args)))
-                                       break))
-                            (loop rest-procs))))))))))
+        (let-values
+            ([(tag context ehp)
+              (call/cc
+               (lambda (break)
+                 (let loop ([context context])
+                   (if (null? context)
+                       (error "uncaught effect" value)
+                       (let ([tag (caar context)]
+                             [find-ehp (cdar context)]
+                             [rest (cdr context)])
+                         (find-ehp value break tag rest)
+                         (loop rest))))))])
+          (parameterize ([*context* context])
+            (shift-at tag k (ehp k)))))))
 
 (define (with-handler handler thunk)
-  ((handler-finally handler)
-   (reset
-    (parameterize
-        ((*effect-handler-procs*
-          (cons (handler-effect handler)
-                (*effect-handler-procs*))))
-      ((handler-value handler)
-       (thunk))))))
+  (let ((tag (make-continuation-prompt-tag)))
+    ((handler-finally handler)
+     (reset-at tag
+       (parameterize
+           ((*context*
+             (cons (cons tag (handler-effect handler))
+                   (*context*))))
+         ((handler-value handler)
+          (thunk)))))))
 
 (define-syntax handle-with
   (syntax-rules ()
