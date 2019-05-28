@@ -3,7 +3,7 @@
 (require racket/control)
 
 (provide make-handler define-handler
-         perform with-handler handle-with handle)
+         perform with-handler handle-with handle-with* handle)
 
 (struct handler (value effect finally))
 
@@ -83,6 +83,14 @@
   (syntax-rules ()
     [(_ handler body ...)
      (with-handler handler (lambda () body ...))]))
+
+(define-syntax handle-with*
+  (syntax-rules ()
+    [(_ (handler) body ...)
+     (handle-with handler body ...)]
+    [(_ (handler rest ...) body ...)
+     (handle-with handler
+       (handle-with* (rest ...) body ...))]))
 
 (define-syntax handle
   (syntax-rules (value effect finally else)
