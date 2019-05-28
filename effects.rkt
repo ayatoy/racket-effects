@@ -30,12 +30,12 @@
 (define-syntax make-handler
   (syntax-rules (value effect finally else)
     [(_ clause ...)
-     (let ((handlers (handler-clauses clause ...))
-           (find-handler
+     (let ([handlers (handler-clauses clause ...)]
+           [find-handler
             (lambda (type handlers)
-              (let ((handler (findf (lambda (h) (eq? type (car h)))
-                                    handlers)))
-                (and handler (cdr handler))))))
+              (let ([handler (findf (lambda (h) (eq? type (car h)))
+                                    handlers)])
+                (and handler (cdr handler))))])
        (handler
         (or (find-handler 'value handlers) identity)
         (or (find-handler 'effect handlers) (lambda (x break tag ctx) (void)))
@@ -64,17 +64,18 @@
                              [rest (cdr context)])
                          (find-ehp value break tag rest)
                          (loop rest))))))])
-          (parameterize ([*context* context])
-            (shift-at tag k (ehp k)))))))
+          (shift-at tag k
+            (parameterize ([*context* context])
+              (ehp k)))))))
 
 (define (with-handler handler thunk)
-  (let ((tag (make-continuation-prompt-tag)))
+  (let ([tag (make-continuation-prompt-tag)])
     ((handler-finally handler)
      (reset-at tag
        (parameterize
-           ((*context*
+           ([*context*
              (cons (cons tag (handler-effect handler))
-                   (*context*))))
+                   (*context*))])
          ((handler-value handler)
           (thunk)))))))
 
