@@ -5,20 +5,29 @@
 (provide make-handler define-handler
          perform with-handler handle-with handle-with* handle)
 
+(define *current-handler* (make-parameter #f))
+(define *tag* (make-continuation-prompt-tag))
 (struct handler (value effect finally))
+(struct %effect (value handler continue))
 
 (define-syntax handler-clause
   (syntax-rules (value effect finally else)
-    [(_ (value x body ...))
+    [(_ (value value-id body ...))
      (cons 'value
-           (lambda (x) body ...))]
-    [(_ (effect x k (test expr ...) ...))
+           (lambda (value-id) body ...))]
+    [(_ (effect value-id cont-id (test expr ...) ...))
      (cons 'effect
-           (lambda (x break tag ctx)
-             (cond (test (break tag ctx (lambda (k) expr ...))) ...)))]
-    [(_ (finally x body ...))
+           (lambda (value-id cont-id handler)
+             (call/cc
+              (lambda (break)
+                (cond [test (break (begin expr ...))] ...)
+                (perform/pc value-id
+                            (lambda (value)
+                              ((handler-finally handler) (cont-id value)))
+                            handler)))))]
+    [(_ (finally value-id body ...))
      (cons 'finally
-           (lambda (x) body ...))]))
+           (lambda (value-id) body ...))]))
 
 (define-syntax handler-clauses
   (syntax-rules (value effect finally else)
@@ -38,7 +47,7 @@
                 (and handler (cdr handler))))])
        (handler
         (or (find-handler 'value handlers) identity)
-        (or (find-handler 'effect handlers) (lambda (x break tag ctx) (void)))
+        (or (find-handler 'effect handlers) (lambda (x k h) (void)))
         (or (find-handler 'finally handlers) identity)))]))
 
 (define-syntax define-handler
@@ -46,38 +55,37 @@
     [(_ name clause ...)
      (define name (make-handler clause ...))]))
 
-(define *context* (make-parameter null))
+(define (perform/pc value k1 h1)
+  (let ([h2 (*current-handler*)])
+    (if (not h2)
+        (error "uncaught effect" value)
+        (control-at *tag* k2
+          (%effect value
+                   h2
+                   (lambda (x)
+                     (%with-handler
+                      h2
+                      (lambda ()
+                        (if (not k1)
+                            (k2 x)
+                            (k2 ((handler-finally h1) (k1 x))))))))))))
 
 (define (perform value)
-  (let ([context (*context*)])
-    (if (null? context)
-        (error "uncaught effect" value)
-        (let-values
-            ([(tag context ehp)
-              (call/cc
-               (lambda (break)
-                 (let loop ([context context])
-                   (if (null? context)
-                       (error "uncaught effect" value)
-                       (let ([tag (caar context)]
-                             [find-ehp (cdar context)]
-                             [rest (cdr context)])
-                         (find-ehp value break tag rest)
-                         (loop rest))))))])
-          (shift-at tag k
-            (parameterize ([*context* context])
-              (ehp k)))))))
+  (perform/pc value #f #f))
+
+(define (%with-handler handler thunk)
+  (let ([result (prompt-at *tag*
+                  (parameterize ([*current-handler* handler])
+                    (thunk)))])
+    (cond [(%effect? result)
+           ((handler-effect handler)
+            (%effect-value result)
+            (%effect-continue result)
+            handler)]
+          [else ((handler-value handler) result)])))
 
 (define (with-handler handler thunk)
-  (let ([tag (make-continuation-prompt-tag)])
-    ((handler-finally handler)
-     (reset-at tag
-       (parameterize
-           ([*context*
-             (cons (cons tag (handler-effect handler))
-                   (*context*))])
-         ((handler-value handler)
-          (thunk)))))))
+  ((handler-finally handler) (%with-handler handler thunk)))
 
 (define-syntax handle-with
   (syntax-rules ()
