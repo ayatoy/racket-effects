@@ -11,6 +11,9 @@
      (k null)]])
 
 (handle-with default
+  (perform (print "Hello, world!\n")))
+
+(handle-with default
   (handle ([effect e k
              [(print? e)
               (perform (print (string-append
