@@ -8,7 +8,7 @@
 (define *current-handler* (make-parameter #f))
 (define *tag* (make-continuation-prompt-tag))
 (struct handler (value effect finally))
-(struct %effect (value handler continue))
+(struct %effect (value continue))
 
 (define-syntax handler-clause
   (syntax-rules (value effect finally else)
@@ -17,14 +17,11 @@
            (lambda (value-id) body ...))]
     [(_ (effect value-id cont-id (test expr ...) ...))
      (cons 'effect
-           (lambda (value-id cont-id handler)
+           (lambda (value-id cont-id)
              (call/cc
               (lambda (break)
                 (cond [test (break (begin expr ...))] ...)
-                (perform/pc value-id
-                            (lambda (value)
-                              ((handler-finally handler) (cont-id value)))
-                            handler)))))]
+                (perform/pc value-id cont-id)))))]
     [(_ (finally value-id body ...))
      (cons 'finally
            (lambda (value-id) body ...))]))
@@ -47,7 +44,7 @@
                 (and handler (cdr handler))))])
        (handler
         (or (find-handler 'value handlers) identity)
-        (or (find-handler 'effect handlers) (lambda (x k h) (void)))
+        (or (find-handler 'effect handlers) (lambda (x k) (perform/pc x k)))
         (or (find-handler 'finally handlers) identity)))]))
 
 (define-syntax define-handler
@@ -55,23 +52,22 @@
     [(_ name clause ...)
      (define name (make-handler clause ...))]))
 
-(define (perform/pc value k1 h1)
-  (let ([h2 (*current-handler*)])
-    (if (not h2)
+(define (perform/pc value k1)
+  (let ([handler (*current-handler*)])
+    (if (not handler)
         (error "uncaught effect" value)
         (control-at *tag* k2
           (%effect value
-                   h2
                    (lambda (x)
                      (%with-handler
-                      h2
+                      handler
                       (lambda ()
                         (if (not k1)
                             (k2 x)
-                            (k2 ((handler-finally h1) (k1 x))))))))))))
+                            (k2 (k1 x)))))))))))
 
 (define (perform value)
-  (perform/pc value #f #f))
+  (perform/pc value #f))
 
 (define (%with-handler handler thunk)
   (let ([result (prompt-at *tag*
@@ -80,8 +76,7 @@
     (cond [(%effect? result)
            ((handler-effect handler)
             (%effect-value result)
-            (%effect-continue result)
-            handler)]
+            (%effect-continue result))]
           [else ((handler-value handler) result)])))
 
 (define (with-handler handler thunk)
